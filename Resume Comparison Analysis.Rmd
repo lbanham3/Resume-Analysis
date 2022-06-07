@@ -1,0 +1,598 @@
+---
+Title: Resume Comparison Analysis
+Date of analysis: March 30, 2020
+Purpose: Comparing reviewer impressions of 3 resumes
+Data collected from: Amazon Mechanical Turk
+output: word_document
+---
+
+```{r Setup, include=FALSE}
+knitr::opts_chunk$set(out.height = "\\textheight",  out.width = "\\textwidth")
+knitr::opts_chunk$set(echo=FALSE) 
+knitr::opts_knit$set(root.dir=dirname(rstudioapi::getSourceEditorContext()$path)) 
+```
+
+# Study Design
+Title: Resume Comparison Analysis
+
+Date of analysis: March 30, 2020
+
+Purpose: Comparing reviewer impressions of 3 resumes
+
+Data collected from: Amazon Mechanical Turk
+
+
+
+```{r Import dataset, include=FALSE, echo=TRUE}
+# Import dataset
+library(readxl)
+library(Hmisc)
+library(dplyr)
+library(psych)
+library(car)
+library(emmeans)
+library(phia)
+library(kableExtra)
+library(BayesFactor)
+library(knitr)
+library(dunn.test)
+
+ResumeDataRaw <- read_excel("Developing+Resume+Pretest+IV_December+7,+2020_16.27.xlsx")
+```
+
+
+# Frequencies
+```{r Frequencies, include=FALSE}
+# apply(ResumeDataRaw[, 7:70], 2, table)
+# hist.data.frame(ResumeDataRaw[,7:70], title = "Histograms of all Numeric Variables")
+```
+
+
+```{r Recoding gender, include=FALSE}
+## Recoding gender
+
+dplyr::count(ResumeDataRaw, gender, gender_4_TEXT)
+ResumeDataRaw$GenderRecoded <- ResumeDataRaw$gender %>%
+  factor(levels=c(1,2,3,4),
+         labels=c("Man", "Woman", "Non-Binary", "I use another term / Option no listed"))
+dplyr::count(ResumeDataRaw, GenderRecoded, gender, gender_4_TEXT)
+```
+
+
+```{r Recoding race, include=FALSE}
+## Recoding race 
+ResumeDataRaw %>%
+    select(race, race_8_TEXT) %>%
+    filter(!is.na(race_8_TEXT))
+
+ResumeDataRaw <- ResumeDataRaw %>%
+  mutate(RaceRecoded=case_when(grepl(",", race) ~ "10",
+                                 race_8_TEXT == "Caucasian/ European American"  ~ "5",
+                                 TRUE ~ race))
+ResumeDataRaw$RaceRecoded <- ResumeDataRaw$RaceRecoded %>%
+  factor(levels=c(1,2,3,4,5,6,7,8,10),
+         labels=c("Black/African American", "Asian/Asian American", "Latino/a/Hispanic/Latin American", "Native American/American Indian/Alaskan Native", "White", "Native Hawaiian/Pacific Islander", "Middle Eastern/Middle Eastern American", "Other", "More than one race"))
+dplyr::count(ResumeDataRaw, RaceRecoded, race, race_8_TEXT)
+```
+
+
+
+
+```{r Exclusions, include=FALSE}
+## Check if all participants consented
+plyr::count(ResumeDataRaw$ConsentQ)
+ResumeDataClean <- ResumeDataRaw %>% 
+  mutate(ConsentRecoded=ConsentQ)
+ResumeDataClean$ConsentRecoded <- ResumeDataClean$ConsentRecoded %>% 
+  factor(levels=c(1,2),
+         labels=c("I consent to participate in this research study", "I do not consent to participate in this research study"))
+plyr::count(ResumeDataClean$ConsentRecoded)
+## Note: All participants consented to participate in the study
+
+## Check if any participants didn't answer any manipulation questions 
+which(colnames(ResumeDataClean)=="attDesResA")
+which(colnames(ResumeDataClean)=="livedUS_2")
+
+ResumeDataCleanExclusions <- ResumeDataClean %>%
+  filter(rowSums(!is.na(ResumeDataClean[ ,8:68])) > 0)
+nrow(ResumeDataCleanExclusions)
+## All participants answered at least one question on the survey
+```
+
+
+```{r Preparing dataset for analysis, include=FALSE}
+## Creating a condition variable 
+ResumeDataCleanExclusions <- ResumeDataCleanExclusions %>%
+  mutate(ConditionA=if_else(rowSums(!is.na(ResumeDataCleanExclusions[ ,8:25])) > 0, "ConditionA", "NA"),
+         ConditionB=if_else(rowSums(!is.na(ResumeDataCleanExclusions[ ,26:43])) > 0, "ConditionB", "NA"),
+         ConditionC=if_else(rowSums(!is.na(ResumeDataCleanExclusions[ ,44:61])) > 0, "ConditionC", "NA"))
+
+ResumeDataCleanExclusions <- ResumeDataCleanExclusions %>% 
+  mutate(Condition=case_when(ConditionA == "ConditionA" ~ "ConditionA",
+                               ConditionB == "ConditionB" ~ "ConditionB",
+                               ConditionC == "ConditionC" ~ "ConditionC"))
+plyr::count(ResumeDataCleanExclusions$Condition)
+
+## Combining variables across resumes and reverse coding variables
+ResumeDataCleanExclusions <- ResumeDataCleanExclusions %>% 
+  mutate(attDesRes=coalesce(attDesResA, attDesResB, attDesResC),
+         likelyAmRes=coalesce(likelyAmResA, likelyAmResB, likelyAmResC),
+         natEngSkillRes=coalesce(natEngSkillResA, natEngSkillResB, natEngSkillResC),
+         famAmCustRes=coalesce(famAmCustResA, famAmCustResB, famAmCustResC),
+         amCultKnRes=coalesce(amCultKnResA, amCultKnResB, amCultKnResC),
+         forAccRes=coalesce(forAccResA, forAccResB, forAccResC),
+         natEngSpRes=coalesce(natEngSpResA, natEngSpResB, natEngSpResC),
+         wellEdRes=coalesce(wellEdResA, wellEdResB, wellEdResC),
+         compRes=coalesce(compResA, compResB, compResC),
+         critThinkRes=coalesce(critThinkResA, critThinkResB, critThinkResC),
+         profSkillRes=coalesce(profSkillResA, profSkillResB, profSkillResC),
+         highStatRes=coalesce(highStatResA, highStatResB, highStatResC),
+         profCarRes=coalesce(profCarResA, profCarResB, profCarResC),
+         qualRes=coalesce(qualResA, qualResB, qualResC),
+         friendRes=coalesce(friendResA, friendResB, friendResC),
+         moralRes=coalesce(moralResA, moralResB, moralResC),
+         libRes=coalesce(libResA, libResB, libResC),
+         conservRes=coalesce(conservResA, conservResB, conservResC),
+         ForAccARecoded=8-forAccResA,
+         ForAccBRecoded=8-forAccResB,
+         ForAccCRecoded=8-forAccResC,
+         LibResARecoded=8-libResA,
+         LibResBRecoded=8-libResB,
+         LibResCRecoded=8-libResC,
+         ForAccRecoded=8-forAccRes,
+         LibResRecoded=8-libRes)
+```
+
+
+
+```{r Calculating reliability and composite variables, include=FALSE}
+# Cronbach's Alpha 
+
+## Americanness for each resume
+AmericanAlphaResA <- psych::alpha(ResumeDataCleanExclusions[c("likelyAmResA", "natEngSkillResA", "famAmCustResA", "amCultKnResA", "ForAccARecoded", "natEngSpResA")])
+AmericanAlphaResA$total
+
+AmericanAlphaResB <- psych::alpha(ResumeDataCleanExclusions[c("likelyAmResB", "natEngSkillResB", "famAmCustResB",
+                                                      "amCultKnResB", "ForAccBRecoded", "natEngSpResB")])
+AmericanAlphaResB$total
+
+AmericanAlphaResC <- psych::alpha(ResumeDataCleanExclusions[c("likelyAmResC", "natEngSkillResC", "famAmCustResC",
+                                                      "amCultKnResC", "ForAccCRecoded", "natEngSpResC")])
+AmericanAlphaResC$total
+
+
+## Status for each resume
+StatusAlphaResA <- psych::alpha(ResumeDataCleanExclusions[c("wellEdResA", "compResA", "critThinkResA",
+                                                      "profSkillResA", "highStatResA", "profCarResA",
+                                                    "qualResA")])
+StatusAlphaResA$total
+
+StatusAlphaResB <- psych::alpha(ResumeDataCleanExclusions[c("wellEdResB", "compResB", "critThinkResB",
+                                                    "profSkillResB", "highStatResB", "profCarResB",
+                                                    "qualResB")])
+StatusAlphaResB$total
+
+StatusAlphaResC <- psych::alpha(ResumeDataCleanExclusions[c("wellEdResC", "compResC", "critThinkResC",
+                                                    "profSkillResC", "highStatResC", "profCarResC",
+                                                    "qualResC")])
+StatusAlphaResC$total
+
+# Split-Half Reliability (Using Spearman-Brown prediction formula)
+
+## Warmth for each resume
+which(colnames(ResumeDataCleanExclusions)=="friendResA")
+which(colnames(ResumeDataCleanExclusions)=="moralResA")
+outputWarmthResA <- splitHalf(ResumeDataCleanExclusions[,22:23])
+outputWarmthResA$meanr
+
+which(colnames(ResumeDataCleanExclusions)=="friendResB")
+which(colnames(ResumeDataCleanExclusions)=="moralResB")
+outputWarmthResB <- splitHalf(ResumeDataCleanExclusions[,40:41])
+outputWarmthResB$meanr
+
+which(colnames(ResumeDataCleanExclusions)=="friendResC")
+which(colnames(ResumeDataCleanExclusions)=="moralResC")
+outputWarmthResC <- splitHalf(ResumeDataCleanExclusions[,58:59])
+outputWarmthResC$meanr
+
+
+## Political orientation for each resume
+polOrientSidebySideResA <- select(ResumeDataCleanExclusions, LibResARecoded, conservResA)
+outputPolOrientResA <- splitHalf(polOrientSidebySideResA)
+outputPolOrientResA$meanr
+
+polOrientSidebySideResB <- select(ResumeDataCleanExclusions, LibResBRecoded, conservResB)
+outputPolOrientResB <- splitHalf(polOrientSidebySideResB)
+outputPolOrientResB$meanr
+
+polOrientSidebySideResC <- select(ResumeDataCleanExclusions, LibResCRecoded, conservResC)
+outputPolOrientResC <- splitHalf(polOrientSidebySideResC)
+outputPolOrientResC$meanr
+
+## Averaging variables (creating composite variables) that have reliability higher than 0.7
+ResumeDataCleanExclusions <- ResumeDataCleanExclusions %>% 
+  mutate(American=rowMeans(cbind(likelyAmRes, natEngSkillRes, famAmCustRes,
+                                   amCultKnRes, ForAccRecoded, natEngSpRes), na.rm=TRUE),
+         Status=rowMeans(cbind(wellEdRes, compRes, critThinkRes,
+                                 profSkillRes, highStatRes, profCarRes, qualRes), na.rm=TRUE))
+  
+```
+
+
+
+# Demographics and Exclusions
+```{r Demographics and Exclusions}
+PNum <- nrow(ResumeDataCleanExclusions)
+print(paste("Number of Participants:", PNum))
+plyr::count(ResumeDataCleanExclusions$ConsentRecoded)
+plyr::count(ResumeDataCleanExclusions$GenderRecoded)
+plyr::count(ResumeDataCleanExclusions$RaceRecoded)
+```
+
+# Cronbach's Alpha Reliability
+
+## Americanness for each resume
+
+Resume A Americanness: `r AmericanAlphaResA$total$raw_alpha`
+
+Resume B Americanness: `r AmericanAlphaResB$total$raw_alpha`
+
+Resume C Americanness: `r AmericanAlphaResC$total$raw_alpha`
+
+## Status for each resume
+
+Resume A Status: `r StatusAlphaResA$total$raw_alpha`
+
+Resume B Status: `r StatusAlphaResB$total$raw_alpha`
+
+Resume C Status: `r StatusAlphaResC$total$raw_alpha`
+
+# Split-Half Reliability
+
+## Warmth for each resume
+
+Resume A Warmth: `r outputWarmthResA$meanr`
+
+Resume B Warmth: `r outputWarmthResB$meanr`
+
+Resume C Warmth: `r outputWarmthResC$meanr`
+
+## Political orientation for each resume
+
+Resume A Political Orientation: `r outputPolOrientResA$meanr`
+
+Resume B Political Orientation: `r outputPolOrientResB$meanr`
+
+Resume C Political Orientation: `r outputPolOrientResC$meanr`
+
+Summary: The Americanness and status scales had high reliability (>.7) for all resumes so we will create composite (average) variables of those items (questions). The warmth and political orientation scales had low reliability (<.70) for at least 1 resume so we will analyze the items (questions) individually.
+
+
+# MAIN ANALYSIS
+## Americanness One-Way  Between-Subjects ANOVA
+```{r Americanness One-Way ANOVA, echo=FALSE, warning=FALSE, message=FALSE, fig.height=6, fig.width=5}
+options(knitr.table.format="markdown") 
+options(contrasts=c("contr.sum","contr.poly"))
+
+describeBy(ResumeDataCleanExclusions$American, group=ResumeDataCleanExclusions$Condition, mat=TRUE) %>% 
+  select(Condition=group1, N=n, Mean=mean, SD=sd, Median=median, Min=min, Max=max, 
+         Skew=skew, Kurtosis=kurtosis, SEM=se)  %>% 
+  kable(align=c("lrrrrrrrr"), digits=2, row.names=FALSE,
+        caption="Americanness of Applicants Descriptive Statistics") %>% 
+  kable_styling(bootstrap_options=c("bordered", "responsive","striped"), full_width=TRUE)
+
+boxplot(ResumeDataCleanExclusions$American~ResumeDataCleanExclusions$Condition, 
+        main="Americanness by Condition", 
+        col= rainbow(4), 
+        horizontal=TRUE)
+
+## Create the ANOVA
+Americanness.aov <- aov(American ~ Condition, ResumeDataCleanExclusions)
+
+## Plotting assumptions
+par(mfrow=c(2,2))
+plot(Americanness.aov)
+
+## Plotting residuals
+par(mfrow=c(1,1))
+# Get the residuals from the model
+Americanness.anova.residuals <- residuals(object=Americanness.aov) 
+# Create a histogram of the residuals
+hist(x=Americanness.anova.residuals) 
+
+## Check normality assumption with Shapiro and Kolmogorov-Smirnov test
+shapiro.test(x = Americanness.anova.residuals)
+ks.test(Americanness.anova.residuals, "pnorm", mean(Americanness.anova.residuals), sd(Americanness.anova.residuals))
+
+## Check HOV assumption with Brown-Forsyth Test
+leveneTest(Americanness.aov)
+
+## Note: Since the normality assumption is violated we run a non-parametric test (Kruskal-Wallis) below
+dunn.test(ResumeDataCleanExclusions$American, ResumeDataCleanExclusions$Condition, method = "holm", alpha = 0.05)
+
+## ANOVA results and simple effects
+summary(Americanness.aov)
+TukeyHSD(Americanness.aov, conf.level=.95)
+
+## Bayesian analysis
+ResumeDataCleanExclusions <- ResumeDataCleanExclusions %>% 
+  mutate(American=as.numeric(American),
+         Condition=as.factor(Condition))
+
+Americanness.bf.aov <- anovaBF(American~Condition, ResumeDataCleanExclusions)
+summary(Americanness.bf.aov)
+```
+Summary: The Kruskal-Wallis test was non-significant (p>.05) and the simple effects between each condition were also non-significant (ps>.05). The ANOVA was also non-significant with non-significant simple effects (ps>.05). The Bayesian analysis indicated an odds of .1222 to 1 (very low odds) that the resumes have different perceived Americanness.
+
+
+## Status One-Way Between-Subjects ANOVA 
+```{r Status One-Way ANOVA, echo=FALSE, warning=FALSE, message=FALSE, fig.height=6, fig.width=5}
+
+describeBy(ResumeDataCleanExclusions$Status, group=ResumeDataCleanExclusions$Condition, mat=TRUE) %>% 
+  select(Condition=group1, N=n, Mean=mean, SD=sd, Median=median, Min=min, Max=max, 
+         Skew=skew, Kurtosis=kurtosis, SEM=se) %>% 
+  kable(align=c("lrrrrrrrr"), digits=2, row.names=FALSE,
+        caption="Status of Applicants Descriptive Statistics") %>% 
+  kable_styling(bootstrap_options=c("bordered", "responsive","striped"), full_width=FALSE)
+
+boxplot(ResumeDataCleanExclusions$Status~ResumeDataCleanExclusions$Condition, 
+        main="Status by Condition", 
+        col= rainbow(4), 
+        horizontal=TRUE)
+
+# Fitting a linear model 
+Status.aov <- aov(Status ~ Condition, ResumeDataCleanExclusions)
+
+## Plotting assumptions
+par(mfrow=c(2,2))
+plot(Status.aov)
+
+## Plotting residuals
+par(mfrow=c(1,1))
+# Get the residuals from the model
+Status.aov.residuals <- residuals(object=Status.aov) 
+# Create a histogram of the residuals
+hist(x=Status.aov.residuals) 
+
+## Check normality assumption with Shapiro and Kolmogorov-Smirnov test
+shapiro.test(x = Status.aov.residuals)
+ks.test(Status.aov.residuals, "pnorm", mean(Status.aov.residuals), sd(Status.aov.residuals))
+
+## Check HOV with Brown-Forsyth Test 
+leveneTest(Status.aov)
+
+## Note: Since the normality assumption is violated we run a non-parametric test (Kruskal-Wallis) below
+dunn.test(ResumeDataCleanExclusions$Status, ResumeDataCleanExclusions$Condition, method = "holm", alpha = 0.05)
+
+## ANOVA results and simple effects
+summary(Status.aov)
+TukeyHSD(Status.aov, conf.level=.95)
+
+## Bayesian analysis
+ResumeDataCleanExclusions <- ResumeDataCleanExclusions %>% 
+  mutate(Status=as.numeric(Status),
+         Condition=as.factor(Condition))
+
+Status.bf.aov<- anovaBF(Status~Condition, ResumeDataCleanExclusions)
+summary(Status.bf.aov)
+```
+Summary: The Kruskal-Wallis test was non-significant (p>.05) and the simple effects between each condition were also non-significant (ps>.05). The ANOVA was also non-significant with non-significant simple effects (ps>.05). The Bayesian analysis indicated an odds of .1170 to 1 (very low odds) that the resumes have different perceived status.
+
+
+## Morality One-Way Between-Subjects ANOVA 
+```{r Morality One-Way ANOVA, echo=FALSE, warning=FALSE, message=FALSE, fig.height=6, fig.width=5}
+
+describeBy(ResumeDataCleanExclusions$moralRes, group=ResumeDataCleanExclusions$Condition, mat=TRUE) %>% 
+  select(Condition=group1, N=n, Mean=mean, SD=sd, Median=median, Min=min, Max=max, 
+         Skew=skew, Kurtosis=kurtosis, SEM=se) %>% 
+  kable(align=c("lrrrrrrrr"), digits=2, row.names=FALSE,
+        caption="Morality of Applicants Descriptive Statistics") %>% 
+  kable_styling(bootstrap_options=c("bordered", "responsive","striped"), full_width=FALSE)
+
+boxplot(ResumeDataCleanExclusions$moralRes~ResumeDataCleanExclusions$Condition, 
+        main="Morality by Condition", 
+        col= rainbow(4), 
+        horizontal=TRUE)
+
+## Fitting a linear model
+Morality.aov <- aov(moralRes ~ Condition, ResumeDataCleanExclusions)
+
+## Plotting assumptions
+par(mfrow=c(2,2))
+plot(Morality.aov)
+
+## Plotting residuals
+par(mfrow=c(1,1))
+# Get the residuals from the model
+Morality.aov.residuals <- residuals(object=Morality.aov) 
+# Create a histogram of the residuals
+hist(x=Morality.aov.residuals) 
+
+## Check normality assumption with Shapiro and Kolmogorov-Smirnov tests
+shapiro.test(x = Morality.aov.residuals)
+ks.test(Morality.aov.residuals, "pnorm", mean(Morality.aov.residuals), sd(Morality.aov.residuals))
+
+## Check HOV with Brown-Forsyth Test
+leveneTest(Morality.aov)
+
+## Note: Since the normality assumption is violated we run a non-parametric test (Kruskal-Wallis) below
+dunn.test(ResumeDataCleanExclusions$moralRes, ResumeDataCleanExclusions$Condition, method = "holm", alpha = 0.05)
+
+## ANOVA results and simple effects
+summary(Morality.aov)
+TukeyHSD(Morality.aov, conf.level=.95)
+
+## Bayesian analysis
+ResumeDataCleanExclusions <- ResumeDataCleanExclusions %>% 
+  mutate(moralRes=as.numeric(moralRes),
+         Condition=as.factor(Condition))
+
+Morality.bf.aov<- anovaBF(moralRes~Condition, ResumeDataCleanExclusions)
+summary(Morality.bf.aov)
+```
+Summary: The Kruskal-Wallis test was non-significant (p>.05) and the simple effects between each condition were also non-significant (ps>.05). The ANOVA was also non-significant with non-significant simple effects (ps>.05). The Bayesian analysis indicated an odds of .0786 to 1 (very low odds) that the resumes have different perceived morality.
+
+
+
+## Friendliness One-Way Between-Subjects ANOVA
+```{r Friendliness One-Way ANOVA, echo=FALSE, warning=FALSE, message=FALSE, fig.height=6, fig.width=5}
+
+describeBy(ResumeDataCleanExclusions$friendRes, group=ResumeDataCleanExclusions$Condition, mat=TRUE) %>% 
+  select(Condition=group1, N=n, Mean=mean, SD=sd, Median=median, Min=min, Max=max, 
+         Skew=skew, Kurtosis=kurtosis, SEM=se) %>% 
+  kable(align=c("lrrrrrrrr"), digits=2, row.names=FALSE,
+        caption="Friendliness of Applicants Descriptive Statistics") %>% 
+  kable_styling(bootstrap_options=c("bordered", "responsive","striped"), full_width=FALSE)
+
+boxplot(ResumeDataCleanExclusions$friendRes~ResumeDataCleanExclusions$Condition,
+        main="Friendliness by Condition", 
+        col= rainbow(4), 
+        horizontal=TRUE)
+
+## Fitting a linear model
+Friendly.aov <- aov(friendRes ~ Condition, ResumeDataCleanExclusions)
+
+## Plotting assumptions
+par(mfrow=c(2,2))
+plot(Friendly.aov)
+
+## Plotting residuals
+par(mfrow=c(1,1))
+# Get the residuals from the model
+Friendly.aov.residuals <- residuals(object=Friendly.aov) 
+# Create a histogram of the residuals
+hist(x=Friendly.aov.residuals) 
+
+## Check normality assumption with Shapiro and Kolmogorov-Smirnov tests
+shapiro.test(x = Friendly.aov.residuals)
+ks.test(Friendly.aov.residuals, "pnorm", mean(Friendly.aov.residuals), sd(Friendly.aov.residuals))
+
+## Check HOV with Brown-Forsyth Test
+leveneTest(Friendly.aov)
+
+## Note: Since the normality assumption is violated we run a non-parametric test (Kruskal-Wallis) below
+dunn.test(ResumeDataCleanExclusions$friendRes, ResumeDataCleanExclusions$Condition, method = "holm", alpha = 0.05)
+
+## ANOVA results and simple effects
+summary(Friendly.aov)
+TukeyHSD(Friendly.aov, conf.level=.95)
+
+## Bayesian analysis
+ResumeDataCleanExclusions <- ResumeDataCleanExclusions %>% 
+  mutate(friendRes=as.numeric(friendRes),
+         Condition=as.factor(Condition))
+
+Friendly.bf.aov<- anovaBF(friendRes~Condition, ResumeDataCleanExclusions)
+summary(Friendly.bf.aov)
+```
+Summary: The Kruskal-Wallis test was non-significant (p>.05) and the simple effects between each condition were also non-significant (ps>.05). The ANOVA was also non-significant with non-significant simple effects (ps>.05). The Bayesian analysis indicated an odds of .1571 to 1 (very low odds) that the resumes have different perceived friendliness.
+
+## Liberal One-Way Between-Subjects ANOVA
+```{r Liberal One-Way ANOVA, echo=FALSE, warning=FALSE, message=FALSE, fig.height=6, fig.width=5}
+
+describeBy(ResumeDataCleanExclusions$libRes, group=ResumeDataCleanExclusions$Condition, mat=TRUE) %>% 
+  select(Condition=group1, N=n, Mean=mean, SD=sd, Median=median, Min=min, Max=max, 
+         Skew=skew, Kurtosis=kurtosis, SEM=se) %>% 
+  kable(align=c("lrrrrrrrr"), digits=2, row.names=FALSE,
+        caption="Liberal Political Orientation of Applicants Descriptive Statistics") %>% 
+  kable_styling(bootstrap_options=c("bordered", "responsive","striped"), full_width=FALSE)
+
+boxplot(ResumeDataCleanExclusions$libRes~ResumeDataCleanExclusions$Condition, 
+        main="Liberal Political Orientation by Condition", 
+        col= rainbow(4), 
+        horizontal=TRUE)
+
+## Fitting a linear model
+Liberal.aov <- aov(libRes ~ Condition, ResumeDataCleanExclusions)
+
+## Plotting assumptions
+par(mfrow=c(2,2))
+plot(Liberal.aov)
+
+## Plotting residuals
+par(mfrow=c(1,1))
+# Get the residuals from the model
+Liberal.aov.residuals <- residuals(object=Liberal.aov) 
+# Create a histogram of the residuals
+hist(x=Liberal.aov.residuals) 
+
+## Check normality assumption with Shapiro and Kolmogorov-Smirnov tests
+shapiro.test(x = Liberal.aov.residuals)
+ks.test(Liberal.aov.residuals, "pnorm", mean(Liberal.aov.residuals), sd(Liberal.aov.residuals))
+
+## Check HOV with Brown-Forsyth Test
+leveneTest(Liberal.aov)
+
+## Note: Since the normality assumption is violated we run a non-parametric test (Kruskal-Wallis) below
+dunn.test(ResumeDataCleanExclusions$libRes, ResumeDataCleanExclusions$Condition, method = "holm", alpha = 0.05)
+
+## ANOVA results and simple effects
+summary(Liberal.aov)
+TukeyHSD(Liberal.aov, conf.level=.95)
+
+## Bayesian analysis
+ResumeDataCleanExclusions <- ResumeDataCleanExclusions %>% 
+  mutate(libRes=as.numeric(libRes),
+         Condition=as.factor(Condition))
+
+Liberal.bf.aov<- anovaBF(libRes~Condition, ResumeDataCleanExclusions)
+summary(Liberal.bf.aov)
+```
+Summary: The Kruskal-Wallis test was non-significant (p>.05) and the simple effects between each condition were also non-significant (ps>.05). The ANOVA was also non-significant with non-significant simple effects (ps>.05). The Bayesian analysis indicated an odds of .0968 to 1 (very low odds) that the resumes have different perceived liberal political orientation.
+
+## Conservative One-Way Between-Subjects ANOVA
+```{r Conservative One-Way ANOVA, echo=FALSE, warning=FALSE, message=FALSE, fig.height=6, fig.width=5}
+
+describeBy(ResumeDataCleanExclusions$conservRes, group=ResumeDataCleanExclusions$Condition, mat=TRUE) %>% 
+  select(Condition=group1, N=n, Mean=mean, SD=sd, Median=median, Min=min, Max=max, 
+         Skew=skew, Kurtosis=kurtosis, SEM=se) %>% 
+  kable(align=c("lrrrrrrrr"), digits=2, row.names=FALSE,
+        caption="Conservative Political Orientation of Applicants Descriptive Statistics") %>% 
+  kable_styling(bootstrap_options=c("bordered", "responsive","striped"), full_width=FALSE)
+
+boxplot(ResumeDataCleanExclusions$conservRes~ResumeDataCleanExclusions$Condition, 
+        main="Conservative Political Orientation by Condition", 
+        col= rainbow(4), 
+        horizontal=TRUE)
+
+## Fitting a linear model
+Conservative.aov <- aov(conservRes ~ Condition, ResumeDataCleanExclusions)
+
+## Plotting assumptions
+par(mfrow=c(2,2))
+plot(Conservative.aov)
+
+## Plotting residuals
+par(mfrow=c(1,1))
+# Get the residuals from the model
+Conservative.aov.residuals <- residuals(object=Conservative.aov) 
+# Create a histogram of the residuals
+hist(x=Conservative.aov.residuals) 
+
+## Check normality assumption with Shapiro and Kolmogorov-Smirnov tests
+shapiro.test(x = Conservative.aov.residuals)
+ks.test(Conservative.aov.residuals, "pnorm", mean(Conservative.aov.residuals), sd(Conservative.aov.residuals))
+
+## Check HOV with Brown-Forsyth Test
+leveneTest(Conservative.aov)
+
+## Note: Since the normality assumption is violated we run a non-parametric test (Kruskal-Wallis) below
+dunn.test(ResumeDataCleanExclusions$conservRes, ResumeDataCleanExclusions$Condition, method = "holm", alpha = 0.05)
+
+## ANOVA results and simple effects
+summary(Conservative.aov)
+TukeyHSD(Conservative.aov, conf.level=.95)
+
+## Bayesian analysis
+ResumeDataCleanExclusions <- ResumeDataCleanExclusions %>% 
+  mutate(conservRes=as.numeric(conservRes),
+         Condition=as.factor(Condition))
+
+Conservative.bf.aov<- anovaBF(conservRes~Condition, ResumeDataCleanExclusions)
+summary(Conservative.bf.aov)
+```
+Summary: The Kruskal-Wallis test was non-significant (p>.05) and the simple effects between each condition were also non-significant (ps>.05). The ANOVA was also non-significant with non-significant simple effects (ps>.05). The Bayesian analysis indicated an odds of .1180 to 1 (very low odds) that the resumes have different perceived conservative political orientation.
+
+## Overall Summary: 
+
+The resumes did not significantly differ in how they were perceived along status, Americanness, friendliness, morality, and liberal and conservative political orientation scales.
